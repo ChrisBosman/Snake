@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
 use std::fmt::Display;
 use std::io::{stdin, stdout, Write};
+use termion::cursor::Down;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::color;
 
-use std::thread;
+use std::{thread, string};
 use std::sync::mpsc::channel;
 
 // Parameters
@@ -14,6 +15,8 @@ const X:usize = 50;  // Max X
 const Y:usize = 20;  // Max Y
 const FRAME_TIME:u128 = 100;  //in ms
 
+#[derive(Clone)]
+#[derive(Copy)]
 #[derive(PartialEq)]
 #[derive(Debug)] // Remove this, was only for debugging
 enum Direction {
@@ -54,6 +57,12 @@ enum BoardElement{
 }
 
 fn main(){
+    while game(){};
+    // let _join = thread_join_handle.join();
+}
+
+fn game() -> bool{
+    let mut err_msg:String = "".into();
     // Create a screen
     // let mut screen = Display::new(X,Y);
     // screen.clear;
@@ -65,10 +74,10 @@ fn main(){
 
     // Setup the thread for key input
     let (tprod,event_queue) = channel();
-    thread::spawn(move || {
+    let thread_join_handle = thread::spawn(move || {
         // Read input and send into the channel
         for c in stdin.keys(){
-            tprod.send(c).unwrap();
+            tprod.send(c).expect("KeyPress");
         }
     });
 
@@ -76,9 +85,12 @@ fn main(){
     let mut is_running = true;
     let mut board: [BoardElement;X*Y] = [BoardElement::Empty;Y*X];
     let mut apple: usize = usize::MAX;
+    let mut direction: Direction = Direction::Right;
+    let mut oldDir: Direction = Direction::Left;
     let mut snake: VecDeque<usize> = VecDeque::new();
     snake.push_back(X/2 + X*(Y/2));
     board[snake[0]] = BoardElement::NewSnakeHead;
+
     write!(stdout, r#"{}{}{}"#, termion::cursor::Goto(1, 1), termion::clear::All, termion::cursor::Hide).unwrap(); // Clear screen
     draw_board(&mut board);
     print_board(&board);
@@ -96,10 +108,10 @@ fn main(){
                 Key::Char('j') => move_apple(&mut board, &mut apple, Direction::Left),
                 Key::Char('l') => move_apple(&mut board, &mut apple, Direction::Right),
 
-                Key::Char('w') => is_running = move_snake(&mut board, &mut snake, Direction::Up),
-                Key::Char('s') => is_running = move_snake(&mut board, &mut snake, Direction::Down),
-                Key::Char('a') => is_running = move_snake(&mut board, &mut snake, Direction::Left),
-                Key::Char('f') => is_running = move_snake(&mut board, &mut snake, Direction::Right),
+                Key::Char('w') => if oldDir != Direction::Down  {direction = Direction::Up},
+                Key::Char('s') => if oldDir != Direction::Up  {direction = Direction::Down},
+                Key::Char('a') => if oldDir != Direction::Right  {direction = Direction::Left},
+                Key::Char('d') => if oldDir != Direction::Left  {direction = Direction::Right},
                 
                 Key::Ctrl('q') => is_running = false,
                 Key::Alt('q') => is_running = false,
@@ -107,6 +119,8 @@ fn main(){
             }
         }
         // Update
+        is_running = move_snake(&mut board, &mut snake, &direction, &mut err_msg);
+        oldDir = direction;
 
         // Render
         write!(stdout, r#"{}"#, termion::cursor::Goto(1, 1)).unwrap(); // Clear screen        
@@ -121,7 +135,27 @@ fn main(){
             thread::sleep(std::time::Duration::from_millis(sleep_time.try_into().unwrap()));
         }   
     }
+
+    write!(stdout, r#"{}"#, termion::cursor::Goto((X/2).try_into().unwrap(), (Y/2).try_into().unwrap())).unwrap(); // Clear screen 
+    print!("GAME OVER\n Press R to restart\n Press q to quit"); 
+    let mut rematch: bool = false;
+
+    'gameOver:  loop {
+        // Procces input
+        for c in event_queue.try_iter(){
+            match c.unwrap(){
+                Key::Char('r') => {rematch = true; break 'gameOver}, 
+                
+                Key::Ctrl('q') => break 'gameOver,
+                Key::Alt('q') => break 'gameOver,
+                Key::Char('p') => return false,
+                _ => (),
+            }
+        }  
+    }
     write!(stdout, r#"{}{}{}"#, termion::cursor::Goto(1, 1), termion::clear::All, termion::cursor::Show).unwrap(); // Clear screen
+    print!("{}",rematch);
+    return rematch;
 }
 
 // Render the whole board
@@ -145,7 +179,7 @@ fn print_board(board : &[BoardElement;X*Y]){
             BoardElement::Apple => print!(" {}■",color::Fg(color::Red)),
             BoardElement::SnakeH => print!(" {}█",color::Fg(color::Green)),
             BoardElement::SnakeHead => print!("{}██",color::Fg(color::Green)),
-            _ => print!(" 0"),
+            _ => print!("  "),
         }
         if index % X == X-1 {
            print!("\r\n");
@@ -217,8 +251,8 @@ fn move_apple(board : &mut [BoardElement;X*Y], apple : &mut usize, dir: Directio
     board[*apple] = BoardElement::NewApple;
 }
 
-fn move_snake(board : &mut [BoardElement;X*Y], snake : &mut VecDeque<usize>, dir: Direction) -> bool {
-    if snake.is_empty() { print!("Length too small, length = {}\n",snake.len()); return false; }
+fn move_snake(board : &mut [BoardElement;X*Y], snake : &mut VecDeque<usize>, dir: &Direction, err_msg : &mut String) -> bool {
+    if snake.is_empty() {  *err_msg = "Snake length too small".to_string(); return false; }
     // Get next spot
     let mut next_index: usize = 0;
     match dir{
@@ -228,8 +262,8 @@ fn move_snake(board : &mut [BoardElement;X*Y], snake : &mut VecDeque<usize>, dir
         Direction::Up =>  { if let Some(last) = snake.back() {next_index = *last - X}},
     }
     // Check collision
-    if next_index >= X*Y { print!("Index out of bounds, i = {}\n",next_index); return false; }
-    if board[next_index] != BoardElement::Empty && board[next_index] != BoardElement::Apple { print!("That is a wall, i = {}\nElement = {:?}\n",next_index, board[next_index]); return false; }
+    if next_index >= X*Y { *err_msg = "Index out of bounds".to_string(); return false; }
+    if board[next_index] != BoardElement::Empty && board[next_index] != BoardElement::Apple && board[next_index] != BoardElement::NewEmpty { *err_msg = "That is a wall".to_string(); return false; }
 
     // Update the body
     // First delete the tail if it does not eat an appel
