@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 console = "0.15.2"
 termion = "1.5.5"
+rand = "0.8.5"
