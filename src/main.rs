@@ -1,17 +1,14 @@
 use std::collections::VecDeque;
-use std::fmt::Display;
 use std::io::{stdin, stdout, Write};
 use rand::rngs::ThreadRng;
-use termion::cursor::Down;
 use termion::event::Key;
 use termion::input::TermRead;
-use termion::raw::{IntoRawMode, RawTerminal};
+use termion::raw::IntoRawMode;
 use termion::color;
-use termion::style::Bold;
 
-use std::{thread, string};
+use std::thread;
 use std::sync::mpsc::channel;
-use rand::{random, Rng};
+use rand::Rng;
 // Parameters
 const X:u16 = 50;  // Max X
 const Y:u16 = 20;  // Max Y
@@ -37,13 +34,11 @@ enum BoardElement{
     Wall,
     Apple,
     Snake,
-    SnakeHead,
 
     NewEmpty,
-    NewWall,
+    // NewWall,
     NewApple,
     NewSnake,
-    NewSnakeHead,
 }
 
 fn main(){
@@ -64,46 +59,30 @@ fn game(){
 
     // Setup the thread for key input
     let (tprod,event_queue) = channel();
-    let thread_join_handle = thread::spawn(move || {
+    thread::spawn(move || {
         // Read input and send into the channel
         for c in stdin.keys(){
             tprod.send(c).expect("KeyPress");
         }
     });
-    let mut rematch: bool = false; // Variable to see if the start screen should be skipped
     let mut is_running = true;
     let mut rng = rand::thread_rng();
     // ------------ {Start of the program} ------------ \\
     while is_running {
         // ------------ {The Start Screen} ------------ \\
-        if !rematch{
-            write!(stdout, r#"{}{}{}"#, termion::cursor::Goto(1, 1), termion::clear::All, termion::cursor::Hide).unwrap(); // Clear screen
-            write!(stdout, r#"{}"#,termion::cursor::Goto(X/2-4,Y/6));
-            print!("{}{}S{}N{}A{}K{}E",Bold,color::Fg(color::Red),color::Fg(color::Cyan),color::Fg(color::Green),color::Fg(color::Blue),color::Fg(color::Rgb(180,80,80)));
-            stdout.flush().unwrap();
-            'startscreen: loop{
-
-                // Procces input
-                for c in event_queue.try_iter(){
-                    match c.unwrap(){                        
-                        Key::Ctrl('q') => break 'startscreen,
-                        Key::Alt('q') => break 'startscreen,
-                        Key::Char('p') => return,
-                        _ => (),
-                    }
-                }  
-            } 
-        }
+        // No
         // ------------ {The Snake game} ------------ \\
         // Setting up the game loop
         let mut is_playing = true;
         let mut board: [BoardElement;(X*Y) as usize] = [BoardElement::Empty;(X*Y) as usize];
         let mut apple: u16 = u16::MAX;
         let mut direction: Direction = Direction::Right;
-        let mut oldDir: Direction = Direction::Left;
+        let mut old_dir: Direction = Direction::Left;
         let mut snake: VecDeque<u16> = VecDeque::new();
         snake.push_back(X/2 + X*(Y/2));
-        board[snake[0] as usize] = BoardElement::NewSnakeHead;
+        snake.push_back(X/2 - 1 + X*(Y/2));
+        board[snake[0] as usize] = BoardElement::NewSnake;
+        board[snake[1] as usize] = BoardElement::NewSnake;
 
         write!(stdout, r#"{}{}{}"#, termion::cursor::Goto(1, 1), termion::clear::All, termion::cursor::Hide).unwrap(); // Clear screen
         draw_board(&mut board);
@@ -122,10 +101,10 @@ fn game(){
                     Key::Char('j') => move_apple(&mut board, &mut apple, Direction::Left),
                     Key::Char('l') => move_apple(&mut board, &mut apple, Direction::Right),
 
-                    Key::Char('w') => if oldDir != Direction::Down  {direction = Direction::Up},
-                    Key::Char('s') => if oldDir != Direction::Up  {direction = Direction::Down},
-                    Key::Char('a') => if oldDir != Direction::Right  {direction = Direction::Left},
-                    Key::Char('d') => if oldDir != Direction::Left  {direction = Direction::Right},
+                    Key::Char('w') => if old_dir != Direction::Down  {direction = Direction::Up},
+                    Key::Char('s') => if old_dir != Direction::Up  {direction = Direction::Down},
+                    Key::Char('a') => if old_dir != Direction::Right  {direction = Direction::Left},
+                    Key::Char('d') => if old_dir != Direction::Left  {direction = Direction::Right},
                     
                     Key::Ctrl('q') => break 'playloop,
                     Key::Alt('q') => break 'playloop,
@@ -134,7 +113,7 @@ fn game(){
             }
             // Update
             is_playing = move_snake(&mut board, &mut snake, &direction, &mut err_msg, &mut apple, &mut rng);
-            oldDir = direction;
+            old_dir = direction;
 
             // Render
             write!(stdout, r#"{}"#, termion::cursor::Goto(1, 1)).unwrap(); // Clear screen        
@@ -152,18 +131,15 @@ fn game(){
 
         write!(stdout, r#"{}"#, termion::cursor::Goto((X/2).try_into().unwrap(), (Y/2).try_into().unwrap())).unwrap(); // Clear screen 
         print!("GAME OVER\n Press R to restart\n Press q to quit\n"); 
-        print!("error : {err_msg}");
         stdout.flush().unwrap();
         // ------------ {Death Screen} ------------ \\
         'gameOver:  loop {
             // Procces input
             for c in event_queue.try_iter(){
                 match c.unwrap(){
-                    Key::Char('r') => {rematch = true; break 'gameOver}, 
-                    
-                    Key::Ctrl('q') => break 'gameOver,
+                    Key::Char('r') => break 'gameOver,
+                    Key::Char('q') => {is_running = false; break 'gameOver},
                     Key::Alt('q') => {is_running = false; break 'gameOver},
-                    Key::Char('p') => return,
                     _ => (),
                 }
             }  
@@ -191,8 +167,7 @@ fn print_board(board : &[BoardElement;(X*Y) as usize]){
                 else                    {print!("{} ║",color::Fg(color::White))}
             },
             BoardElement::Apple => print!(" {}■",color::Fg(color::Red)),
-            BoardElement::Snake => print!(" {}█",color::Fg(color::Green)),
-            BoardElement::SnakeHead => print!("{}██",color::Fg(color::Green)),
+            BoardElement::Snake => print!("{}██",color::Fg(color::Green)),
             _ => print!("  "),
         }
         if index % X == X-1 {
@@ -222,27 +197,25 @@ fn update_board(board : &mut [BoardElement;(X*Y) as usize]){
 
         print!(r#"{}"#,termion::cursor::Goto((index % X * 2 + 1).try_into().unwrap(),(index / X + 1).try_into().unwrap()));
         match board[index as usize]{
-            BoardElement::NewWall =>{
-                // Print the walls (takes some time)
-                // Check corners
-                let _bl = X*(Y-1)+1;  // Bottom Left
-                let _br = (X*Y)-1;  // Bottom right
-                if index == 0               {print!("{} ╔",color::Fg(color::White))}
-                else if index == X-1        {print!("{}═╗",color::Fg(color::White))}
-                else if index == (Y-1)*X  {print!("{} ╚",color::Fg(color::White))}
-                else if index == X*Y-1      {print!("{}═╝",color::Fg(color::White))}
-                // Check sides
-                else if index < X            {print!("{}══",color::Fg(color::White))}
-                else if index > X*(Y-1) {print!("{}══",color::Fg(color::White))}
-                else                    {print!("{} ║",color::Fg(color::White))}
-                board[index as usize] = BoardElement::Empty;
-            },
+            // BoardElement::NewWall =>{
+            //     // Print the walls (takes some time)
+            //     // Check corners
+            //     let _bl = X*(Y-1)+1;  // Bottom Left
+            //     let _br = (X*Y)-1;  // Bottom right
+            //     if index == 0               {print!("{} ╔",color::Fg(color::White))}
+            //     else if index == X-1        {print!("{}═╗",color::Fg(color::White))}
+            //     else if index == (Y-1)*X  {print!("{} ╚",color::Fg(color::White))}
+            //     else if index == X*Y-1      {print!("{}═╝",color::Fg(color::White))}
+            //     // Check sides
+            //     else if index < X            {print!("{}══",color::Fg(color::White))}
+            //     else if index > X*(Y-1) {print!("{}══",color::Fg(color::White))}
+            //     else                    {print!("{} ║",color::Fg(color::White))}
+            //     board[index as usize] = BoardElement::Empty;
+            // },
             BoardElement::NewApple => {print!(" {}■",color::Fg(color::Red)); 
                                         board[index as usize] = BoardElement::Apple},
-            BoardElement::NewSnake => {print!(" {}█",color::Fg(color::Green));
+            BoardElement::NewSnake => {print!("{}██",color::Fg(color::Green));
                                         board[index as usize] = BoardElement::Snake;},
-            BoardElement::NewSnakeHead => {print!("{}██",color::Fg(color::Green));
-                                        board[index as usize] = BoardElement::SnakeHead;},
             _ => print!("{}  ",color::Fg(color::White)),
         }
     }
@@ -268,7 +241,7 @@ fn move_apple(board : &mut [BoardElement;(X*Y) as usize], apple : &mut u16, dir:
 fn move_snake(board : &mut [BoardElement;(X*Y) as usize], snake : &mut VecDeque<u16>, dir: &Direction, err_msg : &mut String, apple : &mut u16 ,  rng: &mut ThreadRng) -> bool {
     if snake.is_empty() {  *err_msg = "Snake length too small".to_string(); return false; }
     // Get next spot
-    let mut next_index: u16;
+    let next_index: u16;
     let snake_x: u16; let snake_y:u16; let head_index: u16;
     if let Some(last) = snake.back() {
         snake_x = *last % X;
@@ -299,12 +272,9 @@ fn move_snake(board : &mut [BoardElement;(X*Y) as usize], snake : &mut VecDeque<
     else{
         replace_apple(board, apple, rng)
     }
-    
-    // Update all the element in between
-    // W.N.I.P.
 
     // Place the first element
-    board[next_index as usize] = BoardElement::NewSnakeHead;
+    board[next_index as usize] = BoardElement::NewSnake;
     snake.push_back(next_index);
 
     return true;
@@ -325,18 +295,6 @@ fn replace_apple(board : &mut [BoardElement;(X*Y) as usize], apple : &mut u16, r
 }
 
 /*
-    Meaning of board
-        0 = Nothing
-        1 = Wall
-        2 = Object ¯\_(ツ)_/¯
-        3 = ?
-        4 = ?
-        5 = ?
-        6 = ?
-        7 = Apple
-        8 = Snake Body
-        9 = Snake Head
-
     For updating
         An offset (CHANGE_OFFSET) will be added to the value to let it know that it is new.
         And when it will be drawn it will deduct the offset from it to signal that it is not new anymore
